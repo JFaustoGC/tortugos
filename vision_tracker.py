@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import math
 
 
 def list_available_cameras(max_test=10):
@@ -31,15 +32,16 @@ def list_available_cameras(max_test=10):
 
 
 class VisionTracker:
-    """Track robot position using OpenCV circle detection"""
+    """Track robot position and orientation using ArUco markers"""
     
-    def __init__(self, camera_id=0, area_width_m=2.0, area_height_m=1.5, roi=None):
+    def __init__(self, camera_id=0, area_width_m=2.0, area_height_m=1.5, roi=None, aruco_dict_type=cv2.aruco.DICT_4X4_50):
         """
         Args:
             camera_id: Camera device ID
             area_width_m: Real-world width of tracking area in meters
             area_height_m: Real-world height of tracking area in meters
             roi: Region of Interest as (x, y, width, height) in pixels, or None for full frame
+            aruco_dict_type: ArUco dictionary type (default: DICT_4X4_50)
         """
         self.camera_id = camera_id
         self.area_width_m = area_width_m
@@ -53,10 +55,16 @@ class VisionTracker:
         # Camera capture
         self.cap = None
         
-        # Circle detection parameters (HSV color range for robot)
-        # Default: detect any circular object
-        self.min_radius = 10
-        self.max_radius = 100
+        # ArUco marker detection
+        self.aruco_dict = cv2.aruco.getPredefinedDictionary(aruco_dict_type)
+        self.aruco_params = cv2.aruco.DetectorParameters()
+        self.aruco_detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
+        
+        # Target marker ID (None means detect any marker)
+        self.target_marker_id = None
+        
+        # Reference position for display (optional)
+        self.reference_position = None  # (x_ref, y_ref, theta_ref)
         
     def start(self):
         """Initialize camera and calibrate"""
@@ -107,94 +115,149 @@ class VisionTracker:
             self.cap.release()
         cv2.destroyAllWindows()
     
-    def get_robot_position(self, show_debug=False):
+    def get_robot_position(self, show_debug=False) -> tuple:
         """
-        Detect robot (circle) and return position in meters
+        Detect robot using ArUco marker and return position and orientation
         
         Args:
             show_debug: If True, display debug window with detection
         
         Returns:
-            (x, y, detected): Position in meters from top-left corner, and detection flag
-                             Returns (None, None, False) if not detected
+            (x, y, theta, detected): Position in meters from top-left corner, 
+                                     orientation in radians, and detection flag
+                                     Returns (None, None, None, False) if not detected
         """
         if not self.cap or not self.cap.isOpened():
-            return None, None, False
+            return None, None, None, False
         
         # Read frame
         ret, frame = self.cap.read()
         if not ret:
-            return None, None, False
-        
-        # Keep original frame for debug display
-        original_frame = frame.copy() if show_debug else None
+            return None, None, None, False
         
         # Apply ROI if specified
         if self.roi:
             roi_x, roi_y, roi_w, roi_h = self.roi
             frame = frame[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
         
-        # Convert to grayscale for circle detection
+        # Convert to grayscale for ArUco detection
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
-        # Apply Gaussian blur to reduce noise
-        blurred = cv2.GaussianBlur(gray, (9, 9), 2)
+        # Detect ArUco markers
+        corners, ids, rejected = self.aruco_detector.detectMarkers(gray)
         
-        # Detect circles using Hough Circle Transform
-        circles = cv2.HoughCircles(
-            blurred,
-            cv2.HOUGH_GRADIENT,
-            dp=1,
-            minDist=50,
-            param1=50,
-            param2=30,
-            minRadius=self.min_radius,
-            maxRadius=self.max_radius
-        )
-        
-        if circles is not None:
-            circles = np.round(circles[0, :]).astype("int")
+        if ids is not None and len(ids) > 0:
+            # If target_marker_id is set, find that specific marker
+            marker_idx = 0
+            if self.target_marker_id is not None:
+                marker_indices = np.where(ids == self.target_marker_id)[0]
+                if len(marker_indices) == 0:
+                    # Target marker not found
+                    if show_debug:
+                        cv2.imshow("Robot Tracking", frame)
+                        cv2.waitKey(1)
+                    return None, None, None, False
+                marker_idx = marker_indices[0]
             
-            # Take the first (most prominent) circle
-            (x_px, y_px, radius) = circles[0]
+            # Get marker corners (4 corners of the marker)
+            marker_corners = corners[marker_idx][0]
+            
+            # Calculate centroid (center of the marker)
+            centroid_x = np.mean(marker_corners[:, 0])
+            centroid_y = np.mean(marker_corners[:, 1])
+            
+            # Calculate orientation from marker corners
+            # Use the vector from bottom-left to bottom-right corner
+            # ArUco corners are ordered: top-left, top-right, bottom-right, bottom-left
+            top_left = marker_corners[0]
+            top_right = marker_corners[1]
+            bottom_right = marker_corners[2]
+            bottom_left = marker_corners[3]
+            
+            # Calculate orientation using top edge (points in robot's forward direction)
+            dx = top_right[0] - top_left[0]
+            dy = top_right[1] - top_left[1]
+            theta = math.atan2(dy, dx)  # Angle in radians
             
             # Convert pixel coordinates to meters
-            x_m = x_px / self.px_per_meter_x
-            y_m = y_px / self.px_per_meter_y
+            # Offset to center (0,0) in the middle of the image
+            x_m = (centroid_x / self.px_per_meter_x) - (self.area_width_m / 2.0)
+            y_m = (centroid_y / self.px_per_meter_y) - (self.area_height_m / 2.0)
             
             if show_debug:
-                # Draw the circle and centroid on cropped frame
-                cv2.circle(frame, (x_px, y_px), radius, (0, 255, 0), 2)
-                cv2.circle(frame, (x_px, y_px), 3, (0, 0, 255), -1)
+                # Draw the detected marker
+                cv2.aruco.drawDetectedMarkers(frame, corners, ids)
                 
-                # Add position text
-                text = f"({x_m:.3f}m, {y_m:.3f}m)"
-                cv2.putText(frame, text, (x_px - 50, y_px - radius - 10),
+                # Draw centroid
+                cv2.circle(frame, (int(centroid_x), int(centroid_y)), 5, (0, 0, 255), -1)
+                
+                # Draw orientation arrow
+                arrow_length = 50
+                end_x = int(centroid_x + arrow_length * math.cos(theta))
+                end_y = int(centroid_y + arrow_length * math.sin(theta))
+                cv2.arrowedLine(frame, (int(centroid_x), int(centroid_y)), 
+                              (end_x, end_y), (0, 255, 0), 3, tipLength=0.3)
+                
+                # Draw reference position if available
+                if self.reference_position is not None:
+                    x_ref_m, y_ref_m, theta_ref = self.reference_position
+                    # Convert reference from meters (centered) to pixels
+                    x_ref_px = (x_ref_m + self.area_width_m / 2.0) * self.px_per_meter_x
+                    y_ref_px = (y_ref_m + self.area_height_m / 2.0) * self.px_per_meter_y
+                    
+                    # Draw reference marker (blue cross)
+                    ref_x = int(x_ref_px)
+                    ref_y = int(y_ref_px)
+                    cv2.drawMarker(frame, (ref_x, ref_y), (255, 0, 0), 
+                                  cv2.MARKER_CROSS, 20, 3)
+                    
+                    # Draw reference orientation arrow (blue)
+                    ref_arrow_length = 40
+                    ref_end_x = int(ref_x + ref_arrow_length * math.cos(theta_ref))
+                    ref_end_y = int(ref_y + ref_arrow_length * math.sin(theta_ref))
+                    cv2.arrowedLine(frame, (ref_x, ref_y), 
+                                  (ref_end_x, ref_end_y), (255, 0, 0), 2, tipLength=0.3)
+                    
+                    # Draw line connecting actual to reference
+                    cv2.line(frame, (int(centroid_x), int(centroid_y)), 
+                           (ref_x, ref_y), (255, 255, 0), 1, cv2.LINE_AA)
+                
+                # Add position and orientation text
+                marker_id = ids[marker_idx][0]
+                text = f"ID:{marker_id} ({x_m:.3f}m, {y_m:.3f}m, {math.degrees(theta):.1f}deg)"
+                cv2.putText(frame, text, (int(centroid_x) - 100, int(centroid_y) - 30),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
                 
-                # Show only the cropped ROI frame
                 cv2.imshow("Robot Tracking", frame)
                 cv2.waitKey(1)
             
-            return x_m, y_m, True
+            return x_m, y_m, theta, True
         
         if show_debug:
-            # Show only cropped frame when no detection
             cv2.imshow("Robot Tracking", frame)
             cv2.waitKey(1)
         
-        return None, None, False
+        return None, None, None, False
     
-    def set_detection_params(self, min_radius=10, max_radius=100):
+    def set_target_marker(self, marker_id: int = 0) -> None:
         """
-        Configure circle detection parameters
+        Set the target ArUco marker ID to track
         
         Args:
-            min_radius: Minimum circle radius in pixels
-            max_radius: Maximum circle radius in pixels
+            marker_id: Marker ID to track, or 0 to track any marker
         """
-        self.min_radius = min_radius
-        self.max_radius = max_radius
+        self.target_marker_id = marker_id
+    
+    def set_reference_position(self, x_ref, y_ref, theta_ref):
+        """
+        Set reference position for visualization
+        
+        Args:
+            x_ref: Reference x position in meters (centered coordinate system)
+            y_ref: Reference y position in meters (centered coordinate system)
+            theta_ref: Reference orientation in radians
+        """
+        self.reference_position = (x_ref, y_ref, theta_ref)
 
 
 if __name__ == "__main__":
@@ -216,10 +279,10 @@ if __name__ == "__main__":
         
         try:
             while True:
-                x, y, detected = tracker.get_robot_position(show_debug=True)
+                x, y, theta, detected = tracker.get_robot_position(show_debug=True)
                 
                 if detected:
-                    print(f"Robot position: X={x:.3f}m, Y={y:.3f}m")
+                    print(f"Robot position: X={x:.3f}m, Y={y:.3f}m, Theta={math.degrees(theta):.1f}°")
                 else:
                     print("Robot not detected")
                 
