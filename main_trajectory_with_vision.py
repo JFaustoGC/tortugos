@@ -63,8 +63,8 @@ if __name__ == "__main__":
     TRAJECTORY_DURATION = 20.0  # seconds (run for 20 seconds)
     
     # Vision tracking parameters
-    AREA_WIDTH = 2.4   # meters
-    AREA_HEIGHT = 1.45  # meters
+    AREA_WIDTH = 2.45   # meters
+    AREA_HEIGHT = 1.47  # meters
     CAMERA_ROI = (360, 180, 1200, 720)  # ROI configuration
     
     # Starting position offset (center of tracking area)

@@ -161,3 +161,13 @@ class SimulationAnimator:
         """Show the animation."""
         self.anim = self.animate()  # Store reference to prevent garbage collection
         plt.show()
+
+    def save(self, filename, writer=None):
+        """Save the animation to a file.
+        
+        Args:
+            filename: Name of the output file (e.g., 'animation.gif').
+            writer: Optional writer instance for saving (e.g., PillowWriter).
+        """
+        self.anim = self.animate()  # Store reference to prevent garbage collection
+        self.anim.save(filename, writer=writer)
