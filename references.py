@@ -12,8 +12,8 @@ def vc_trajectory(t):
     Returns:
         tuple: (x, y, theta, xd, yd, xdd, ydd, theta_dot, v)
     """
-    r = 1
-    omega = 0.3
+    r = 0.5
+    omega = 2.0 * np.pi / 10.0  # One full circle in 10 seconds
     x = r * np.cos(omega * t)
     y = r * np.sin(omega * t)
     xd = -r * omega * np.sin(omega * t)

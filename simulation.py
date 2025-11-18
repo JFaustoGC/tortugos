@@ -30,10 +30,13 @@ connectivity_matrix = np.array([
 
 # Controller gains
 gains = {
-    'cx': 0.8,
-    'ct': 10.0,
-    'cy': 1.2,
-    'consensus': 0.3  # Consensus weight (set to 0.3 to see effect of perturbation)
+    # 'cx': 0.8,
+    # 'cy': 1.2,
+    # 'ct': 10.0,
+    'cx' : 2.0,
+    'cy' : 100.0,
+    'ct' : 5.0,
+    'consensus': 1.0  # Consensus weight (set to 0.3 to see effect of perturbation)
 }
 
 k = 0  # Design parameter for alpha
