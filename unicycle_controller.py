@@ -13,28 +13,42 @@ class UnicycleController:
         """
         self.wheel_base = wheel_base
         self.wheel_radius = wheel_radius
-    
-    def compute_command(self, v, vy, omega):
+        
+    def compute_command_from_velocities(self, v, omega):
         """
-        Convert unicycle model velocities to wheel speeds
+        Convert unicycle velocities (v, omega) to wheel velocities using Jacobian.
+        
+        Differential drive Jacobian:
+        [v_r]   [1/r   L/(2r)] [v    ]
+        [v_l] = [1/r  -L/(2r)] [omega]
+        
+        where:
+            v_r, v_l: right and left wheel velocities
+            v: linear velocity (m/s)
+            omega: angular velocity (rad/s)
+            r: wheel radius
+            L: wheel base (distance between wheels)
         
         Args:
-            v: Linear velocity in forward direction (m/s)
-            vy: Lateral velocity (ignored for differential drive)
-            omega: Angular velocity (rad/s)
+            v: linear velocity (m/s)
+            omega: angular velocity (rad/s)
         
         Returns:
-            Formatted command string for robot
+            str: command string in format "v_left,v_right"
         """
-        # Differential drive kinematics:
-        # v_left = v - (L/2) * omega
-        # v_right = v + (L/2) * omega
+        r = self.wheel_radius
+        L = self.wheel_base
         
-        v_left = v - (self.wheel_base / 2.0) * omega
-        v_right = v + (self.wheel_base / 2.0) * omega
+        # Apply Jacobian transformation
+        v_right = (v / r) + (L / (2 * r)) * omega
+        v_left = (v / r) - (L / (2 * r)) * omega
         
-        return self._format_message(v_right, v_left)
-
+        v_right *= -1
+        v_left *= -1
+        
+        # Convert to command format
+        return self._format_message(v_right, v_left, limit=0.1)
+    
     
     def compute_command_from_direction(self, vx, vy, scale=1.0):
         """
@@ -58,7 +72,7 @@ class UnicycleController:
         v_left = (vx + vy) * scale
         v_right = (vx - vy) * scale
         
-        return self._format_message(v_right, v_left)
+        return self._format_message(v_left=v_right,v_right=v_left)
     
     def _format_message(self, v_right, v_left, limit=8.0):
         """

@@ -82,6 +82,8 @@ class VisionTracker:
         if not ret:
             raise RuntimeError("Failed to read from camera")
         
+        # frame = cv2.flip(frame, -1) # rotate 180 degrees  
+        
         height_px, width_px = frame.shape[:2]
         
         # Verify what resolution we actually got
@@ -135,6 +137,8 @@ class VisionTracker:
         if not ret:
             return None, None, None, False
         
+        frame = cv2.flip(frame, -1)  # rotate 180 degrees
+        
         # Apply ROI if specified
         if self.roi:
             roi_x, roi_y, roi_w, roi_h = self.roi
@@ -177,12 +181,28 @@ class VisionTracker:
             # Calculate orientation using top edge (points in robot's forward direction)
             dx = top_right[0] - top_left[0]
             dy = top_right[1] - top_left[1]
-            theta = math.atan2(dy, dx)  # Angle in radians
+            top_left = marker_corners[0]
+            top_right = marker_corners[1]
+
+            # image-space vector
+            top_left = marker_corners[0]
+            top_right = marker_corners[1]
+            vec_px = top_right - top_left  # dx, dy in pixels
+            
+            dx = vec_px[0]
+            dy = -vec_px[1]  # flip y
+            theta = math.atan2(dy, dx)
+            theta = theta % (2 * math.pi)
+
+
+
             
             # Convert pixel coordinates to meters
             # Offset to center (0,0) in the middle of the image
             x_m = (centroid_x / self.px_per_meter_x) - (self.area_width_m / 2.0)
-            y_m = (centroid_y / self.px_per_meter_y) - (self.area_height_m / 2.0)
+            # y_m = (centroid_y / self.px_per_meter_y) - (self.area_height_m / 2.0)
+            y_m = -(centroid_y / self.px_per_meter_y) + (self.area_height_m / 2.0)
+
             
             if show_debug:
                 # Draw the detected marker
@@ -192,11 +212,17 @@ class VisionTracker:
                 cv2.circle(frame, (int(centroid_x), int(centroid_y)), 5, (0, 0, 255), -1)
                 
                 # Draw orientation arrow
+                # arrow_length = 50
+                # end_x = int(centroid_x + arrow_length * math.cos(theta))
+                # end_y = int(centroid_y + arrow_length * math.sin(theta))
+                # cv2.arrowedLine(frame, (int(centroid_x), int(centroid_y)), 
+                #               (end_x, end_y), (0, 255, 0), 3, tipLength=0.3)
+                
                 arrow_length = 50
                 end_x = int(centroid_x + arrow_length * math.cos(theta))
-                end_y = int(centroid_y + arrow_length * math.sin(theta))
-                cv2.arrowedLine(frame, (int(centroid_x), int(centroid_y)), 
-                              (end_x, end_y), (0, 255, 0), 3, tipLength=0.3)
+                end_y = int(centroid_y - arrow_length * math.sin(theta))  # note minus to convert y-up → y-down
+                cv2.arrowedLine(frame, (int(centroid_x), int(centroid_y)), (end_x, end_y), (0, 255, 0), 3, tipLength=0.3)
+
                 
                 # Draw reference position if available
                 if self.reference_position is not None:
@@ -239,6 +265,11 @@ class VisionTracker:
         
         return None, None, None, False
     
+    def normalize_angle_0_to_2pi(self, angle):
+        return angle % (2 * math.pi)
+
+
+    
     def set_target_marker(self, marker_id: int = 0) -> None:
         """
         Set the target ArUco marker ID to track
@@ -266,7 +297,7 @@ if __name__ == "__main__":
     
     # Initialize tracker directly with camera 4 (Logitech HD Pro Webcam C920)
     tracker = VisionTracker(
-        camera_id=4,
+        camera_id=0,
         area_width_m=2.4,   # 2.4 meters wide
         area_height_m=1.45,   # 1.45 meters tall
         roi=(360, 180, 1200, 720)  # ROI configuration

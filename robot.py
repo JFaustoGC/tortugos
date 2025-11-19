@@ -26,8 +26,15 @@ class Robot:
                 dsrdtr=False
             )
             time.sleep(2)
-            self.serial.reset_input_buffer()
-            self.serial.reset_output_buffer()
+            
+            # Try to reset buffers, but continue if it fails
+            try:
+                self.serial.reset_input_buffer()
+                self.serial.reset_output_buffer()
+            except Exception as e:
+                print(f"[{self.name}] Warning: Could not reset buffers: {e}")
+                # Continue anyway - connection might still work
+            
             print(f"[{self.name}] Connected to {self.rfcomm_port} at {self.baudrate} baud")
             return True
         except serial.SerialException as e:

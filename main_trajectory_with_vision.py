@@ -1,53 +1,12 @@
 import time
-import math
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrow
 from robot import Robot
 from unicycle_controller import UnicycleController
 from vision_tracker import VisionTracker
-
-
-def generate_circle_trajectory(linear_velocity=1.0, angular_velocity=0.1, dt=0.05):
-    """
-    Generate a circular trajectory for a differential drive robot
-    
-    Args:
-        linear_velocity: Constant forward velocity in m/s
-        angular_velocity: Constant angular velocity in rad/s
-        dt: Time step in seconds
-    
-    Yields:
-        (vx, vy): Velocity commands computed from unicycle model
-    """
-    while True:
-        # For circular motion in unicycle model:
-        # v = linear velocity (forward)
-        # omega = angular velocity (turning rate)
-        # 
-        # To convert to (vx, vy) for the controller, we need to invert:
-        # For a differential drive, the relationship is:
-        # vx = v (forward velocity becomes vx)
-        # vy = L * omega / 2 (turning contributes to lateral motion)
-        # But actually, for differential drive vx and vy map directly to wheel speeds
-        # 
-        # The correct mapping is:
-        # v_left = v - (L/2)*omega
-        # v_right = v + (L/2)*omega
-        # 
-        # And from compute_command_from_direction:
-        # v_left = vx + vy
-        # v_right = vx - vy
-        # 
-        # Therefore:
-        # vx + vy = v - (L/2)*omega
-        # vx - vy = v + (L/2)*omega
-        # 
-        # Solving:
-        # 2*vx = 2*v  =>  vx = v
-        # 2*vy = -(L)*omega  =>  vy = -(L/2)*omega
-        
-        vx = linear_velocity
-        vy = -(0.07782 / 2.0) * angular_velocity  # Using wheel base
-        
-        yield (vx, vy)
+from references import vc_trajectory, follower_reference
+from controllers import follower_control
 
 
 if __name__ == "__main__":
@@ -56,20 +15,30 @@ if __name__ == "__main__":
     WHEEL_BASE = -0.07782        # meters (negative indicates sign convention)
     UPDATE_RATE = 0.05           # seconds (20 Hz)
     
-    # Trajectory parameters
-    LINEAR_VELOCITY = 1.0   # m/s (linear speed)
-    ANGULAR_VELOCITY = 0.1  # rad/s (rotation speed)
-    CIRCLE_RADIUS = LINEAR_VELOCITY / ANGULAR_VELOCITY  # Calculated radius: v/ω
-    TRAJECTORY_DURATION = 20.0  # seconds (run for 20 seconds)
-    
     # Vision tracking parameters
     AREA_WIDTH = 2.4   # meters
     AREA_HEIGHT = 1.45  # meters
     CAMERA_ROI = (360, 180, 1200, 720)  # ROI configuration
     
     # Starting position offset (center of tracking area)
-    START_X = AREA_WIDTH / 2.0   # Start at center X (1.2m from left)
-    START_Y = AREA_HEIGHT / 2.0  # Start at center Y (0.725m from top)
+    # START_X = AREA_WIDTH / 2.0   # Start at center X (1.2m from left)
+    # START_Y = AREA_HEIGHT / 2.0  # Start at center Y (0.725m from top)
+    START_X = 0
+    START_Y = 0
+    
+    # Follower offset in body frame (single follower)
+    FOLLOWER_OFFSET = np.array([0.0, 0.0])  # No offset, follows virtual center directly
+    
+    # Controller gains
+    GAINS = {
+        'cx': 0.8,
+        'ct': 10.0,
+        'cy': 1.2,
+        'consensus': 0.0  # No consensus for single follower
+    }
+    K_PARAM = 0.00  # Design parameter for alpha
+    
+    TRAJECTORY_DURATION = 20.0  # seconds
     
     # Robot configuration
     robot = Robot(
@@ -77,6 +46,12 @@ if __name__ == "__main__":
         mac_address="98:D3:32:20:28:46",
         rfcomm_port="/dev/rfcomm0"
     )
+    
+    # robot = Robot(
+    #     name="RAM05",
+    #     mac_address="98:D3:32:10:15:96",
+    #     rfcomm_port="/dev/rfcomm1"
+    # )
     
     # Controller
     unicycle = UnicycleController(
@@ -92,25 +67,53 @@ if __name__ == "__main__":
         roi=CAMERA_ROI
     )
     
+    # Setup matplotlib for live plotting
+    plt.ion()
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.set_xlim(-AREA_WIDTH/2, AREA_WIDTH/2)
+    ax.set_ylim(-AREA_HEIGHT/2, AREA_HEIGHT/2)
+    ax.set_xlabel('X (meters)')
+    ax.set_ylabel('Y (meters)')
+    ax.set_title('Robot Trajectory Tracking')
+    ax.grid(True, alpha=0.3)
+    ax.set_aspect('equal')
+    
+    # Plot formatting
+    ax.xaxis.set_major_locator(plt.MultipleLocator(0.2))
+    ax.yaxis.set_major_locator(plt.MultipleLocator(0.2))
+    ax.xaxis.set_minor_locator(plt.MultipleLocator(0.1))
+    ax.yaxis.set_minor_locator(plt.MultipleLocator(0.1))
+    ax.grid(which='major', alpha=0.5, linestyle='-', linewidth=0.8)
+    ax.grid(which='minor', alpha=0.2, linestyle=':', linewidth=0.5)
+    
+    # Initialize plot elements
+    robot_trail, = ax.plot([], [], 'b-', linewidth=1, label='Robot path', alpha=0.6)
+    ref_trail, = ax.plot([], [], 'r--', linewidth=1, label='Reference path', alpha=0.6)
+    robot_pos, = ax.plot([], [], 'bo', markersize=8, label='Robot')
+    ref_pos, = ax.plot([], [], 'ro', markersize=8, label='Reference')
+    
+    # Arrow for orientation (will be updated)
+    ref_arrow = None
+    
+    ax.legend(loc='upper right')
+    
+    # Data storage
+    robot_x_history = []
+    robot_y_history = []
+    ref_x_history = []
+    ref_y_history = []
+    
     print(f"Connecting to {robot.name}...")
     
     if robot.connect():
         print("Starting vision tracker...")
         if vision.start():
-            print(f"Starting circular trajectory:")
-            print(f"  Linear velocity: {LINEAR_VELOCITY}m/s")
-            print(f"  Angular velocity: {ANGULAR_VELOCITY} rad/s")
-            print(f"  Calculated radius: {CIRCLE_RADIUS:.1f}m")
-            print(f"  Expected center: X={START_X:.2f}m, Y={START_Y:.2f}m")
+            print(f"Starting circular formation trajectory:")
+            print(f"  Radius: 0.5m")
+            print(f"  Period: 10s")
+            print(f"  Follower offset: {FOLLOWER_OFFSET}")
             print(f"  Duration: {TRAJECTORY_DURATION}s")
             print("\nPress Ctrl+C to stop")
-            
-            # Generate trajectory
-            trajectory = generate_circle_trajectory(
-                linear_velocity=LINEAR_VELOCITY,
-                angular_velocity=ANGULAR_VELOCITY,
-                dt=UPDATE_RATE
-            )
             
             try:
                 start_time = time.time()
@@ -127,24 +130,86 @@ if __name__ == "__main__":
                     
                     # Check if enough time has passed since last update
                     if current_time - last_update >= UPDATE_RATE:
-                        # Get next velocity from trajectory (vx, vy)
-                        vx, vy = next(trajectory)
+                        # Get virtual center trajectory
+                        vc_state = vc_trajectory(elapsed)
                         
-                        # Compute robot command using direction method
-                        command = unicycle.compute_command_from_direction(vx, vy, scale=1.0)
+                        # Get follower reference
+                        x_ref, y_ref, theta_ref, theta_dot_ref, v_ref = follower_reference(
+                            vc_state, FOLLOWER_OFFSET
+                        )
+                        
+                        # Offset reference to tracking area center
+                        x_ref += START_X
+                        y_ref += START_Y
+                        
+                        # Store reference trajectory
+                        ref_x_history.append(x_ref)
+                        ref_y_history.append(y_ref)
                         
                         # Get robot position from vision
-                        x, y, detected = vision.get_robot_position(show_debug=True)
+                        x, y, _, detected = vision.get_robot_position(show_debug=True)
                         
-                        # Debug output with position relative to center
                         if detected:
-                            # Calculate position relative to expected center
-                            dx = x - START_X
-                            dy = y - START_Y
-                            distance_from_center = math.sqrt(dx**2 + dy**2)
-                            print(f"t={elapsed:.1f}s | vx={vx:.2f}, vy={vy:.3f} | Pos: X={x:.3f}m Y={y:.3f}m | Dist from center: {distance_from_center:.3f}m | cmd={command}     ", end='\r')
+                            # Store robot trajectory
+                            robot_x_history.append(x)
+                            robot_y_history.append(y)
+                            
+                            # Get robot heading (you may need to add orientation tracking to vision)
+                            # For now, estimate from position change or use a default
+                            theta = 0.0  # TODO: Add orientation tracking to VisionTracker
+                            
+                            # Current state
+                            state = [x, y, theta]
+                            
+                            # Reference (x, y, theta, omega, v)
+                            ref = (x_ref, y_ref, theta_ref, theta_dot_ref, v_ref)
+                            
+                            # Compute control (no neighbors for single follower)
+                            v_cmd, w_cmd = follower_control(
+                                state=state,
+                                ref=ref,
+                                neighbors_errors=None,
+                                connectivity_row=None,
+                                gains=GAINS,
+                                k=K_PARAM
+                            )
+                            
+                            # Convert to wheel commands
+                            command = unicycle.compute_command_from_velocities(v_cmd, w_cmd)
+                            
+                            # Calculate error for display
+                            error_x = x_ref - x
+                            error_y = y_ref - y
+                            error_dist = np.sqrt(error_x**2 + error_y**2)
+                            
+                            # Update plot
+                            robot_trail.set_data(robot_x_history, robot_y_history)
+                            ref_trail.set_data(ref_x_history, ref_y_history)
+                            robot_pos.set_data([x], [y])
+                            ref_pos.set_data([x_ref], [y_ref])
+                            
+                            # Update reference orientation arrow
+                            if ref_arrow:
+                                ref_arrow.remove()
+                            arrow_length = 0.15
+                            dx = arrow_length * np.cos(theta_ref)
+                            dy = arrow_length * np.sin(theta_ref)
+                            ref_arrow = FancyArrow(
+                                x_ref, y_ref, dx, dy,
+                                width=0.03, head_width=0.08, head_length=0.06,
+                                color='red', alpha=0.7, zorder=5
+                            )
+                            ax.add_patch(ref_arrow)
+                            
+                            plt.pause(0.001)
+                            
+                            print(f"t={elapsed:.1f}s | Ref: ({x_ref:.3f}, {y_ref:.3f}) θ={np.degrees(theta_ref):.1f}° | "
+                                  f"Pos: ({x:.3f}, {y:.3f}) | Error: {error_dist:.3f}m | "
+                                  f"v={v_cmd:.2f} w={w_cmd:.2f}     ", end='\r')
                         else:
-                            print(f"t={elapsed:.1f}s | vx={vx:.2f}, vy={vy:.3f} | Pos: NOT DETECTED | cmd={command}     ", end='\r')
+                            # No detection, stop robot
+                            command = unicycle.stop_command()
+                            print(f"t={elapsed:.1f}s | Pos: NOT DETECTED | Stopping robot     ", end='\r')
                         
                         # Send to robot
                         if not robot.send_message(command):
@@ -163,6 +228,8 @@ if __name__ == "__main__":
                 robot.send_message(unicycle.stop_command())
                 time.sleep(0.5)
                 robot.disconnect()
+                plt.ioff()
+                plt.show()
         else:
             print("Failed to start vision tracker")
     else:

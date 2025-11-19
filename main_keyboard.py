@@ -11,17 +11,17 @@ if __name__ == "__main__":
     UPDATE_RATE = 0.05           # seconds (20 Hz)
     
     # Robot configuration
-    ram_06 = Robot(
+    robot = Robot(
         name="RAM06",
         mac_address="98:D3:32:20:28:46",
         rfcomm_port="/dev/rfcomm0"
     )
     
-    ram_05 = Robot(
-        name="RAM05",
-        mac_address="98:D3:32:10:15:96",
-        rfcomm_port="/dev/rfcomm1"
-    )
+    # robot = Robot(
+    #     name="RAM05",
+    #     mac_address="98:D3:32:10:15:96",
+    #     rfcomm_port="/dev/rfcomm1"
+    # )
     
     # Controllers
     unicycle = UnicycleController(
@@ -30,10 +30,10 @@ if __name__ == "__main__":
     )
     keyboard = KeyboardController(acceleration=0.4, deceleration=0.2, max_speed=10.0)
     
-    print(f"Connecting to {ram_06.name}...")
-    print(f"Connecting to {ram_05.name}...")
+    # print(f"Connecting to {ram_06.name}...")
+    print(f"Connecting to {robot.name}...")
     
-    if ram_06.connect() and ram_05.connect():
+    if robot.connect():
         keyboard.print_help()
         keyboard.start()
         
@@ -57,9 +57,9 @@ if __name__ == "__main__":
                     print(f"vx={vx:.2f}, vy={vy:.2f} | cmd={command}     ", end='\r')
                     
                     # Send to robot
-                    if not ram_06.send_message(command) or not ram_05.send_message(command):
+                    if  not robot.send_message(command):
                         print("Failed to send. Connection may be lost.")
-                        if not ram_06.reconnect() or not ram_05.reconnect():
+                        if  not robot.reconnect():
                             print("Failed to reconnect. Exiting.")
                             break
                     
@@ -70,11 +70,12 @@ if __name__ == "__main__":
         finally:
             keyboard.stop()
             print("Sending stop command...")
-            ram_06.send_message(unicycle.stop_command())
+            # ram_06.send_message(unicycle.stop_command())
             time.sleep(0.5)
-            ram_06.disconnect()
+            # ram_06.disconnect()
     else:
-        print(f"\nFailed to connect to {ram_06.name}")
-        print("Make sure:")
-        print(f"1. Bluetooth device is paired: {ram_06.mac_address}")
-        print(f"2. Run: sudo rfcomm bind {ram_06.rfcomm_port} {ram_06.mac_address}")
+        pass
+        # print(f"\nFailed to connect to {ram_06.name}")
+        # print("Make sure:")
+        # print(f"1. Bluetooth device is paired: {ram_06.mac_address}")
+        # print(f"2. Run: sudo rfcomm bind {ram_06.rfcomm_port} {ram_06.mac_address}")

@@ -4,6 +4,7 @@
 if [ -z "$1" ] || [ -z "$2" ]; then
     echo "Usage: $0 <mac_address> <rfcomm_port>"
     echo "Example: $0 98:D3:32:20:28:46 /dev/rfcomm0"
+    echo "Example: $0 00:1A:7D:DA:71:13 /dev/rfcomm1"
     exit 1
 fi
 
