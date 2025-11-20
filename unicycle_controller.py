@@ -43,11 +43,8 @@ class UnicycleController:
         v_right = (v / r) + (L / (2 * r)) * omega
         v_left = (v / r) - (L / (2 * r)) * omega
         
-        v_right *= -1
-        v_left *= -1
-        
         # Convert to command format
-        return self._format_message(v_right, v_left, limit=0.1)
+        return self._format_message(v_right=v_left, v_left=v_right, limit=3)
     
     
     def compute_command_from_direction(self, vx, vy, scale=1.0):

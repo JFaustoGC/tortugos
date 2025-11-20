@@ -295,6 +295,10 @@ if __name__ == "__main__":
     """Test the vision tracker"""
     import time
     
+    print("Listing available cameras...")
+    available_cams = list_available_cameras(max_test=10)
+    print(f"Available cameras: {available_cams}")
+    
     # Initialize tracker directly with camera 4 (Logitech HD Pro Webcam C920)
     tracker = VisionTracker(
         camera_id=0,

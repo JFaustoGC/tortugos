@@ -38,7 +38,7 @@ if __name__ == "__main__":
     }
     K_PARAM = 0.00  # Design parameter for alpha
     
-    TRAJECTORY_DURATION = 20.0  # seconds
+    TRAJECTORY_DURATION = 1000.0  # seconds
     
     # Robot configuration
     robot = Robot(
@@ -61,7 +61,7 @@ if __name__ == "__main__":
     
     # Vision tracker
     vision = VisionTracker(
-        camera_id=4,  # Logitech HD Pro Webcam C920
+        camera_id=0,  # Logitech HD Pro Webcam C920
         area_width_m=AREA_WIDTH,
         area_height_m=AREA_HEIGHT,
         roi=CAMERA_ROI
@@ -147,16 +147,14 @@ if __name__ == "__main__":
                         ref_y_history.append(y_ref)
                         
                         # Get robot position from vision
-                        x, y, _, detected = vision.get_robot_position(show_debug=True)
+                        x, y, theta, detected = vision.get_robot_position(show_debug=True)
                         
                         if detected:
                             # Store robot trajectory
                             robot_x_history.append(x)
                             robot_y_history.append(y)
                             
-                            # Get robot heading (you may need to add orientation tracking to vision)
-                            # For now, estimate from position change or use a default
-                            theta = 0.0  # TODO: Add orientation tracking to VisionTracker
+                            
                             
                             # Current state
                             state = [x, y, theta]
@@ -220,16 +218,19 @@ if __name__ == "__main__":
                         
                         last_update = current_time
             
-            except KeyboardInterrupt:
-                print("\nTrajectory interrupted by user")
             finally:
-                vision.stop()
+                try:
+                    vision.stop()
+                except KeyboardInterrupt:
+                    print("\nVision stop interrupted, forcing release")
+
                 print("\nSending stop command...")
                 robot.send_message(unicycle.stop_command())
                 time.sleep(0.5)
                 robot.disconnect()
                 plt.ioff()
                 plt.show()
+
         else:
             print("Failed to start vision tracker")
     else:
