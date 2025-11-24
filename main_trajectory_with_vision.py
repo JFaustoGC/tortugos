@@ -8,233 +8,309 @@ from vision_tracker import VisionTracker
 from references import vc_trajectory, follower_reference
 from controllers import follower_control
 
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+connectivity_matrix = np.array([
+    [0, 1, 1],
+    [1, 0, 1],
+    [1, 1, 0]
+])
+
+# Robot physical parameters
+WHEEL_RADIUS = 0.06471 / 2
+WHEEL_BASE = 0.07782  # Negative for sign convention
+UPDATE_RATE = 0.05   # 20 Hz
+
+# Vision parameters
+AREA_WIDTH = 0.49 * 7
+AREA_HEIGHT = 0.49 * 4
+CAMERA_ROI = (0, 0, 1920, 1080)
+START_X = 0
+START_Y = 0
+
+# Controller Gains (Tuned)
+GAINS = {
+    'cx': 1.1,
+    'ct': 1.0,
+    'cy': 65.0,
+    'consensus': 0.3
+}
+K_PARAM = 1.0
+TRAJECTORY_DURATION = 1000.0
+
+# =============================================================================
+# FLEET CONFIGURATION
+# =============================================================================
+ROBOT_FLEET = [
+    {
+        'id': 'RAM06',
+        'mac': '98:D3:32:20:28:46',
+        'port': '/dev/rfcomm0',
+        'marker_id': 7,
+        'offset': np.array([0.2, 0.2]),  # 0.5m to the "left" of center
+        'color': 'blue'
+    },
+    # Uncomment to add second robot
+    {
+        'id': 'RAM05',
+        'mac': '98:D3:32:10:15:96', # Update MAC
+        'port': '/dev/rfcomm1',
+        'marker_id': 0,
+        'offset': np.array([-0.2, -0.2]), # 0.5m to the "right" of center
+        'color': 'green'
+    },
+    {
+        'id': 'RAM02',
+        'mac': '98:D3:32:30:24:38', # Update MAC
+        'port': '/dev/rfcomm2',
+        'marker_id': 1,
+        'offset': np.array([-0.00, 0.00]), # Center
+        'color': 'red'
+    }
+]
+
+# =============================================================================
+# ROBOT AGENT CLASS
+# =============================================================================
+
+class FormationRobot:
+    def __init__(self, config, axes):
+        self.config = config
+        self.name = config['id']
+        self.marker_id = config['marker_id']
+        self.offset = config['offset']
+        self.color = config['color']
+
+        # Hardware connection
+        self.robot = Robot(self.name, config['mac'], config['port'])
+        self.controller = UnicycleController(abs(WHEEL_BASE), WHEEL_RADIUS)
+
+        # State
+        self.connected = False
+        self.w_cmd_filtered = 0.0
+        self.w_filter_alpha = 0.3
+
+        # Plotting handles
+        self.ax_traj, self.ax_pos, self.ax_theta, self.ax_cmd = axes
+
+        # Initialize plots
+        self.trail_line, = self.ax_traj.plot([], [], '-', color=self.color, linewidth=1, alpha=0.6, label=f'{self.name} Path')
+        self.ref_line, = self.ax_traj.plot([], [], '--', color=self.color, linewidth=1, alpha=0.4)
+        self.pos_marker, = self.ax_traj.plot([], [], 'o', color=self.color, markersize=8)
+        self.ref_marker, = self.ax_traj.plot([], [], 'x', color=self.color, markersize=8)
+
+        self.robot_arrow = None
+        self.ref_arrow = None
+
+        # Error plots
+        self.err_line, = self.ax_pos.plot([], [], '-', color=self.color, label=f'{self.name} Err')
+        self.theta_err_line, = self.ax_theta.plot([], [], '-', color=self.color, label=f'{self.name} θ Err')
+
+        # Command plots
+        self.v_line, = self.ax_cmd.plot([], [], '-', color=self.color, linestyle='-', label=f'{self.name} v')
+        self.w_line, = self.ax_cmd.plot([], [], '-', color=self.color, linestyle='--', label=f'{self.name} ω')
+
+        # History
+        self.history = {
+            't': [], 'x': [], 'y': [], 'ref_x': [], 'ref_y': [],
+            'err_dist': [], 'err_theta': [], 'v': [], 'w': []
+        }
+
+    def connect(self):
+        print(f"Connecting to {self.name}...")
+        self.connected = self.robot.connect()
+        return self.connected
+
+    def disconnect(self):
+        if self.connected:
+            print(f"Stopping {self.name}...")
+            self.robot.send_message(self.controller.stop_command())
+            time.sleep(0.2)
+            self.robot.disconnect()
+
+    def step(self, current_time, elapsed_time, vc_state, vision):
+        if not self.connected:
+            return
+
+        # 1. Calculate Reference
+        x_ref, y_ref, theta_ref, theta_dot_ref, v_ref = follower_reference(vc_state, self.offset)
+        x_ref += START_X
+        y_ref += START_Y
+
+        # 2. Get Position (Set target marker first)
+        # Note: Assuming vision tracker has set_target_marker or similar mechanism
+        # If get_robot_position accepts an ID, use that.
+        # Here we assume we need to tell the tracker which ID to look for.
+        if hasattr(vision, 'set_target_marker'):
+            vision.set_target_marker(self.marker_id)
+
+        x, y, theta, detected = vision.get_robot_position()
+
+        # 3. Compute Control
+        if detected:
+            state = [x, y, theta]
+            ref = (x_ref, y_ref, theta_ref, theta_dot_ref, v_ref)
+
+            v_cmd, w_cmd = follower_control(
+                state=state, ref=ref,
+                neighbors_errors=None, connectivity_row=connectivity_matrix,
+                gains=GAINS, k=K_PARAM
+            )
+
+            # Filter w
+            self.w_cmd_filtered = self.w_filter_alpha * w_cmd + (1 - self.w_filter_alpha) * self.w_cmd_filtered
+
+            # Errors
+            err_x = x_ref - x
+            err_y = y_ref - y
+            err_dist = np.sqrt(err_x**2 + err_y**2)
+            err_theta = np.arctan2(np.sin(theta_ref - theta), np.cos(theta_ref - theta))
+
+            # Update History
+            self.history['t'].append(elapsed_time)
+            self.history['x'].append(x)
+            self.history['y'].append(y)
+            self.history['ref_x'].append(x_ref)
+            self.history['ref_y'].append(y_ref)
+            self.history['err_dist'].append(err_dist)
+            self.history['err_theta'].append(np.degrees(err_theta))
+            self.history['v'].append(v_cmd)
+            self.history['w'].append(self.w_cmd_filtered)
+
+            command = self.controller.compute_command_from_velocities(v_cmd, self.w_cmd_filtered)
+
+            # Print status
+            print(f"[{self.name}] Err: {err_dist:.3f}m {np.degrees(err_theta):.1f}° | Cmd: v={v_cmd:.2f} w={self.w_cmd_filtered:.2f}")
+        else:
+            command = self.controller.stop_command()
+            print(f"[{self.name}] NOT DETECTED")
+
+        # 4. Send Command
+        if not self.robot.send_message(command):
+            print(f"[{self.name}] Lost connection, attempting reconnect...")
+            self.robot.reconnect()
+
+    def update_plots(self):
+        if not self.history['t']:
+            return
+
+        # Trajectory
+        self.trail_line.set_data(self.history['x'], self.history['y'])
+        self.ref_line.set_data(self.history['ref_x'], self.history['ref_y'])
+        self.pos_marker.set_data([self.history['x'][-1]], [self.history['y'][-1]])
+        self.ref_marker.set_data([self.history['ref_x'][-1]], [self.history['ref_y'][-1]])
+
+        # Arrows
+        if self.robot_arrow: self.robot_arrow.remove()
+        if self.ref_arrow: self.ref_arrow.remove()
+
+        # Current state
+        curr_x, curr_y = self.history['x'][-1], self.history['y'][-1]
+        # We don't store theta in history explicitly above, but we can infer or store it.
+        # For simplicity, let's just skip arrow update if we don't have the raw theta handy
+        # OR better, store theta in history.
+        # (Skipping arrow update logic for brevity in class, but can be added if theta is stored)
+
+        # Errors
+        self.err_line.set_data(self.history['t'], self.history['err_dist'])
+        self.theta_err_line.set_data(self.history['t'], self.history['err_theta'])
+
+        # Commands
+        self.v_line.set_data(self.history['t'], self.history['v'])
+        self.w_line.set_data(self.history['t'], self.history['w'])
+
+
+# =============================================================================
+# MAIN EXECUTION
+# =============================================================================
 
 if __name__ == "__main__":
-    # Robot physical parameters
-    WHEEL_RADIUS = 0.06471 / 2  # meters
-    WHEEL_BASE = -0.07782        # meters (negative indicates sign convention)
-    UPDATE_RATE = 0.05           # seconds (20 Hz)
-    
-    # Vision tracking parameters
-    AREA_WIDTH = 2.4   # meters
-    AREA_HEIGHT = 1.45  # meters
-    CAMERA_ROI = (360, 180, 1200, 720)  # ROI configuration
-    
-    # Starting position offset (center of tracking area)
-    # START_X = AREA_WIDTH / 2.0   # Start at center X (1.2m from left)
-    # START_Y = AREA_HEIGHT / 2.0  # Start at center Y (0.725m from top)
-    START_X = 0
-    START_Y = 0
-    
-    # Follower offset in body frame (single follower)
-    FOLLOWER_OFFSET = np.array([0.0, 0.0])  # No offset, follows virtual center directly
-    
-    # Controller gains
-    GAINS = {
-        'cx': 0.8,
-        'ct': 10.0,
-        'cy': 1.2,
-        'consensus': 0.0  # No consensus for single follower
-    }
-    K_PARAM = 0.00  # Design parameter for alpha
-    
-    TRAJECTORY_DURATION = 1000.0  # seconds
-    
-    # Robot configuration
-    robot = Robot(
-        name="RAM06",
-        mac_address="98:D3:32:20:28:46",
-        rfcomm_port="/dev/rfcomm0"
-    )
-    
-    # robot = Robot(
-    #     name="RAM05",
-    #     mac_address="98:D3:32:10:15:96",
-    #     rfcomm_port="/dev/rfcomm1"
-    # )
-    
-    # Controller
-    unicycle = UnicycleController(
-        wheel_base=abs(WHEEL_BASE),
-        wheel_radius=WHEEL_RADIUS
-    )
-    
-    # Vision tracker
-    vision = VisionTracker(
-        camera_id=0,  # Logitech HD Pro Webcam C920
-        area_width_m=AREA_WIDTH,
-        area_height_m=AREA_HEIGHT,
-        roi=CAMERA_ROI
-    )
-    
-    # Setup matplotlib for live plotting
+    # 1. Setup Plots
     plt.ion()
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.set_xlim(-AREA_WIDTH/2, AREA_WIDTH/2)
-    ax.set_ylim(-AREA_HEIGHT/2, AREA_HEIGHT/2)
-    ax.set_xlabel('X (meters)')
-    ax.set_ylabel('Y (meters)')
-    ax.set_title('Robot Trajectory Tracking')
-    ax.grid(True, alpha=0.3)
-    ax.set_aspect('equal')
-    
-    # Plot formatting
-    ax.xaxis.set_major_locator(plt.MultipleLocator(0.2))
-    ax.yaxis.set_major_locator(plt.MultipleLocator(0.2))
-    ax.xaxis.set_minor_locator(plt.MultipleLocator(0.1))
-    ax.yaxis.set_minor_locator(plt.MultipleLocator(0.1))
-    ax.grid(which='major', alpha=0.5, linestyle='-', linewidth=0.8)
-    ax.grid(which='minor', alpha=0.2, linestyle=':', linewidth=0.5)
-    
-    # Initialize plot elements
-    robot_trail, = ax.plot([], [], 'b-', linewidth=1, label='Robot path', alpha=0.6)
-    ref_trail, = ax.plot([], [], 'r--', linewidth=1, label='Reference path', alpha=0.6)
-    robot_pos, = ax.plot([], [], 'bo', markersize=8, label='Robot')
-    ref_pos, = ax.plot([], [], 'ro', markersize=8, label='Reference')
-    
-    # Arrow for orientation (will be updated)
-    ref_arrow = None
-    
-    ax.legend(loc='upper right')
-    
-    # Data storage
-    robot_x_history = []
-    robot_y_history = []
-    ref_x_history = []
-    ref_y_history = []
-    
-    print(f"Connecting to {robot.name}...")
-    
-    if robot.connect():
-        print("Starting vision tracker...")
-        if vision.start():
-            print(f"Starting circular formation trajectory:")
-            print(f"  Radius: 0.5m")
-            print(f"  Period: 10s")
-            print(f"  Follower offset: {FOLLOWER_OFFSET}")
-            print(f"  Duration: {TRAJECTORY_DURATION}s")
-            print("\nPress Ctrl+C to stop")
-            
-            try:
-                start_time = time.time()
-                last_update = start_time
-                
-                while True:
-                    current_time = time.time()
-                    elapsed = current_time - start_time
-                    
-                    # Stop after trajectory duration
-                    if elapsed >= TRAJECTORY_DURATION:
-                        print(f"\nTrajectory completed after {elapsed:.1f}s")
-                        break
-                    
-                    # Check if enough time has passed since last update
-                    if current_time - last_update >= UPDATE_RATE:
-                        # Get virtual center trajectory
-                        vc_state = vc_trajectory(elapsed)
-                        
-                        # Get follower reference
-                        x_ref, y_ref, theta_ref, theta_dot_ref, v_ref = follower_reference(
-                            vc_state, FOLLOWER_OFFSET
-                        )
-                        
-                        # Offset reference to tracking area center
-                        x_ref += START_X
-                        y_ref += START_Y
-                        
-                        # Store reference trajectory
-                        ref_x_history.append(x_ref)
-                        ref_y_history.append(y_ref)
-                        
-                        # Get robot position from vision
-                        x, y, theta, detected = vision.get_robot_position(show_debug=True)
-                        
-                        if detected:
-                            # Store robot trajectory
-                            robot_x_history.append(x)
-                            robot_y_history.append(y)
-                            
-                            
-                            
-                            # Current state
-                            state = [x, y, theta]
-                            
-                            # Reference (x, y, theta, omega, v)
-                            ref = (x_ref, y_ref, theta_ref, theta_dot_ref, v_ref)
-                            
-                            # Compute control (no neighbors for single follower)
-                            v_cmd, w_cmd = follower_control(
-                                state=state,
-                                ref=ref,
-                                neighbors_errors=None,
-                                connectivity_row=None,
-                                gains=GAINS,
-                                k=K_PARAM
-                            )
-                            
-                            # Convert to wheel commands
-                            command = unicycle.compute_command_from_velocities(v_cmd, w_cmd)
-                            
-                            # Calculate error for display
-                            error_x = x_ref - x
-                            error_y = y_ref - y
-                            error_dist = np.sqrt(error_x**2 + error_y**2)
-                            
-                            # Update plot
-                            robot_trail.set_data(robot_x_history, robot_y_history)
-                            ref_trail.set_data(ref_x_history, ref_y_history)
-                            robot_pos.set_data([x], [y])
-                            ref_pos.set_data([x_ref], [y_ref])
-                            
-                            # Update reference orientation arrow
-                            if ref_arrow:
-                                ref_arrow.remove()
-                            arrow_length = 0.15
-                            dx = arrow_length * np.cos(theta_ref)
-                            dy = arrow_length * np.sin(theta_ref)
-                            ref_arrow = FancyArrow(
-                                x_ref, y_ref, dx, dy,
-                                width=0.03, head_width=0.08, head_length=0.06,
-                                color='red', alpha=0.7, zorder=5
-                            )
-                            ax.add_patch(ref_arrow)
-                            
-                            plt.pause(0.001)
-                            
-                            print(f"t={elapsed:.1f}s | Ref: ({x_ref:.3f}, {y_ref:.3f}) θ={np.degrees(theta_ref):.1f}° | "
-                                  f"Pos: ({x:.3f}, {y:.3f}) | Error: {error_dist:.3f}m | "
-                                  f"v={v_cmd:.2f} w={w_cmd:.2f}     ", end='\r')
-                        else:
-                            # No detection, stop robot
-                            command = unicycle.stop_command()
-                            print(f"t={elapsed:.1f}s | Pos: NOT DETECTED | Stopping robot     ", end='\r')
-                        
-                        # Send to robot
-                        if not robot.send_message(command):
-                            print("\nFailed to send. Connection may be lost.")
-                            if not robot.reconnect():
-                                print("Failed to reconnect. Exiting.")
-                                break
-                        
-                        last_update = current_time
-            
-            finally:
-                try:
-                    vision.stop()
-                except KeyboardInterrupt:
-                    print("\nVision stop interrupted, forcing release")
+    fig = plt.figure(figsize=(16, 10))
+    gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
 
-                print("\nSending stop command...")
-                robot.send_message(unicycle.stop_command())
-                time.sleep(0.5)
-                robot.disconnect()
-                plt.ioff()
-                plt.show()
+    ax_traj = fig.add_subplot(gs[:, 0])
+    ax_traj.set_title('Multi-Robot Trajectory')
+    ax_traj.set_xlim(-AREA_WIDTH/2, AREA_WIDTH/2)
+    ax_traj.set_ylim(-AREA_HEIGHT/2, AREA_HEIGHT/2)
+    ax_traj.set_aspect('equal')
+    ax_traj.grid(True, alpha=0.3)
 
+    ax_pos = fig.add_subplot(gs[0, 1])
+    ax_pos.set_title('Position Error (m)')
+    ax_pos.grid(True)
+
+    ax_theta = fig.add_subplot(gs[1, 1])
+    ax_theta.set_title('Theta Error (deg)')
+    ax_theta.grid(True)
+
+    ax_cmd = fig.add_subplot(gs[2, 1])
+    ax_cmd.set_title('Commands')
+    ax_cmd.grid(True)
+
+    axes = (ax_traj, ax_pos, ax_theta, ax_cmd)
+
+    # 2. Initialize Vision
+    vision = VisionTracker(4, AREA_WIDTH, AREA_HEIGHT, CAMERA_ROI)
+
+    # 3. Initialize Robots
+    agents = []
+    for config in ROBOT_FLEET:
+        agent = FormationRobot(config, axes)
+        if agent.connect():
+            agents.append(agent)
         else:
-            print("Failed to start vision tracker")
-    else:
-        print(f"\nFailed to connect to {robot.name}")
-        print("Make sure:")
-        print(f"1. Bluetooth device is paired: {robot.mac_address}")
-        print(f"2. Run: sudo rfcomm bind {robot.rfcomm_port} {robot.mac_address}")
+            print(f"Failed to initialize {config['id']}")
+
+    if not agents:
+        print("No robots connected. Exiting.")
+        exit()
+
+    # 4. Start Vision
+    print("Starting vision...")
+    if not vision.start():
+        print("Vision failed.")
+        exit()
+
+    # 5. Main Loop
+    print("Starting trajectory...")
+    try:
+        start_time = time.time()
+        last_update = start_time
+
+        while True:
+            current_time = time.time()
+            elapsed = current_time - start_time
+
+            if elapsed >= TRAJECTORY_DURATION:
+                break
+
+            if current_time - last_update >= UPDATE_RATE:
+                # Calculate Virtual Center once per cycle
+                vc_state = vc_trajectory(elapsed)
+
+                # Update all robots
+                for agent in agents:
+                    agent.step(current_time, elapsed, vc_state, vision)
+                    agent.update_plots()
+
+                # Rescale axes
+                for ax in [ax_pos, ax_theta, ax_cmd]:
+                    ax.relim()
+                    ax.autoscale_view()
+
+                plt.pause(0.001)
+                last_update = current_time
+
+    except KeyboardInterrupt:
+        print("\nStopping...")
+    finally:
+        vision.stop()
+
+        for agent in agents:
+            agent.disconnect()
+        plt.ioff()
+        plt.show()

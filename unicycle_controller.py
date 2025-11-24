@@ -4,7 +4,7 @@ import numpy as np
 
 class UnicycleController:
     """Unicycle robot kinematics and command formatting"""
-    
+
     def __init__(self, wheel_base=0.2, wheel_radius=0.05):
         """
         Args:
@@ -13,50 +13,50 @@ class UnicycleController:
         """
         self.wheel_base = wheel_base
         self.wheel_radius = wheel_radius
-        
+
     def compute_command_from_velocities(self, v, omega):
         """
         Convert unicycle velocities (v, omega) to wheel velocities using Jacobian.
-        
+
         Differential drive Jacobian:
         [v_r]   [1/r   L/(2r)] [v    ]
         [v_l] = [1/r  -L/(2r)] [omega]
-        
+
         where:
             v_r, v_l: right and left wheel velocities
             v: linear velocity (m/s)
             omega: angular velocity (rad/s)
             r: wheel radius
             L: wheel base (distance between wheels)
-        
+
         Args:
             v: linear velocity (m/s)
             omega: angular velocity (rad/s)
-        
+
         Returns:
             str: command string in format "v_left,v_right"
         """
         r = self.wheel_radius
         L = self.wheel_base
-        
+
         # Apply Jacobian transformation
         v_right = (v / r) + (L / (2 * r)) * omega
         v_left = (v / r) - (L / (2 * r)) * omega
-        
+
         # Convert to command format
-        return self._format_message(v_right=v_left, v_left=v_right, limit=3)
-    
-    
+        return self._format_message(v_right, v_left, limit=4)
+
+
     def compute_command_from_direction(self, vx, vy, scale=1.0):
         """
         Convert directional velocity to wheel speeds
         Direct assignment: both vx and vy contribute to both wheels for true diagonal motion
-        
+
         Args:
             vx: Desired forward velocity (positive = forward)
             vy: Desired lateral velocity (positive = left)
             scale: Velocity scaling factor
-        
+
         Returns:
             Formatted command string for robot
         """
@@ -65,16 +65,16 @@ class UnicycleController:
         # Simple approach: directly assign vx and vy to wheels
         # Left wheel gets vx + vy contribution
         # Right wheel gets vx - vy contribution
-        
+
         v_left = (vx + vy) * scale
         v_right = (vx - vy) * scale
-        
-        return self._format_message(v_left=v_right,v_right=v_left)
-    
+
+        return self._format_message(v_left,v_right)
+
     def _format_message(self, v_right, v_left, limit=8.0):
         """
         Format wheel speeds into robot command string
-        
+
         Args:
             v_right: Right wheel speed
             v_left: Left wheel speed
@@ -93,8 +93,8 @@ class UnicycleController:
         # fixed protocol formatting
         fmt = lambda x: f"{x:+06.2f}"
         return f"IR{fmt(vr)}L{fmt(vl)}F"
-    
-    
+
+
     def stop_command(self):
         """Generate stop command"""
         return "IR+00.00L+00.00F\n"

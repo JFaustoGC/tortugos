@@ -15,19 +15,25 @@ def main():
     # Robot physical parameters
     WHEEL_RADIUS = 0.06471 / 2  # meters
     WHEEL_BASE = 0.07782         # meters
-    UPDATE_RATE = 0.05           # seconds (20 Hz)
+    UPDATE_RATE = 0.1           # seconds (20 Hz)
     
     # Vision tracking parameters
     AREA_WIDTH = 2.4   # meters
     AREA_HEIGHT = 1.45  # meters
-    CAMERA_ROI = (360, 180, 1200, 720)
+    CAMERA_ROI = (0, 0, 1920, 1080)
     MARKER_ID = None  # Track any ArUco marker
     
     # Robot configuration (RAM06)
+    # robot = Robot(
+    #     name="RAM06",
+    #     mac_address="98:D3:32:20:28:46",
+    #     rfcomm_port="/dev/rfcomm0"
+    # )
+    
     robot = Robot(
-        name="RAM06",
-        mac_address="98:D3:32:20:28:46",
-        rfcomm_port="/dev/rfcomm0"
+        name="RAM05",
+        mac_address="98:D3:32:10:15:96",    
+        rfcomm_port="/dev/rfcomm1"
     )
     
     # Controllers
@@ -43,7 +49,7 @@ def main():
     
     # Vision tracker
     vision = VisionTracker(
-        camera_id=4,
+        camera_id=0,
         area_width_m=AREA_WIDTH,
         area_height_m=AREA_HEIGHT,
         roi=CAMERA_ROI

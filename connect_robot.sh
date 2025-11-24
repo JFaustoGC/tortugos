@@ -2,10 +2,11 @@
 # Script to connect Bluetooth robots
 
 if [ -z "$1" ] || [ -z "$2" ]; then
-    echo "Usage: $0 <mac_address> <rfcomm_port>"
-    echo "Example: $0 98:D3:32:20:28:46 /dev/rfcomm0"
-    echo "Example: $0 00:1A:7D:DA:71:13 /dev/rfcomm1"
-    exit 1
+  echo "Usage: $0 <mac_address> <rfcomm_port>"
+  echo "Example: $0 98:D3:32:20:28:46 /dev/rfcomm0"
+  echo "Example: $0 98:D3:32:10:15:96 /dev/rfcomm1"
+  echo "Example: $0 98:D3:32:30:24:38 /dev/rfcomm2"
+  exit 1
 fi
 
 MAC_ADDRESS="$1"
@@ -20,8 +21,8 @@ sudo rfcomm release "$RFCOMM_PORT" 2>/dev/null
 sudo rfcomm bind "$RFCOMM_PORT" "$MAC_ADDRESS"
 
 if [ $? -eq 0 ]; then
-    echo "Successfully bound $MAC_ADDRESS to $RFCOMM_PORT"
+  echo "Successfully bound $MAC_ADDRESS to $RFCOMM_PORT"
 else
-    echo "Failed to bind device. Make sure Bluetooth is enabled and device is paired."
-    exit 1
+  echo "Failed to bind device. Make sure Bluetooth is enabled and device is paired."
+  exit 1
 fi

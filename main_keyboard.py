@@ -9,62 +9,68 @@ if __name__ == "__main__":
     WHEEL_RADIUS = 0.06471 / 2  # meters
     WHEEL_BASE = -0.07782        # meters (negative indicates sign convention)
     UPDATE_RATE = 0.05           # seconds (20 Hz)
-    
+
     # Robot configuration
     robot = Robot(
         name="RAM06",
         mac_address="98:D3:32:20:28:46",
         rfcomm_port="/dev/rfcomm0"
     )
-    
+
     # robot = Robot(
     #     name="RAM05",
     #     mac_address="98:D3:32:10:15:96",
     #     rfcomm_port="/dev/rfcomm1"
     # )
-    
+
+    # robot = Robot(
+    #     name="RAM02",
+    #     mac_address="98:D3:32:30:24:38",
+    #     rfcomm_port="/dev/rfcomm2"
+    # )
+
     # Controllers
     unicycle = UnicycleController(
         wheel_base=abs(WHEEL_BASE),  # Use absolute value for calculations
         wheel_radius=WHEEL_RADIUS
     )
     keyboard = KeyboardController(acceleration=0.4, deceleration=0.2, max_speed=10.0)
-    
+
     # print(f"Connecting to {ram_06.name}...")
     print(f"Connecting to {robot.name}...")
-    
+
     if robot.connect():
         keyboard.print_help()
         keyboard.start()
-        
+
         try:
             last_update = time.time()
-            
+
             while True:
                 # Continuously check for key presses
                 keyboard.check_keys()
-                
+
                 # Check if enough time has passed since last update
                 current_time = time.time()
                 if current_time - last_update >= UPDATE_RATE:
                     # Get velocity based on all keys pressed during this window
                     vx, vy = keyboard.get_velocity()
-                    
+
                     # Compute robot command (direction mode)
                     command = unicycle.compute_command_from_direction(vx, vy, scale=1.0)
-                    
+
                     # Debug output
                     print(f"vx={vx:.2f}, vy={vy:.2f} | cmd={command}     ", end='\r')
-                    
+
                     # Send to robot
                     if  not robot.send_message(command):
                         print("Failed to send. Connection may be lost.")
                         if  not robot.reconnect():
                             print("Failed to reconnect. Exiting.")
                             break
-                    
+
                     last_update = current_time
-        
+
         except KeyboardInterrupt:
             print("\nStopping robot...")
         finally:
