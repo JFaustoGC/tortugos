@@ -16,48 +16,48 @@ def main():
     WHEEL_RADIUS = 0.06471 / 2  # meters
     WHEEL_BASE = 0.07782         # meters
     UPDATE_RATE = 0.1           # seconds (20 Hz)
-    
+
     # Vision tracking parameters
     AREA_WIDTH = 2.4   # meters
     AREA_HEIGHT = 1.45  # meters
     CAMERA_ROI = (0, 0, 1920, 1080)
     MARKER_ID = None  # Track any ArUco marker
-    
+
     # Robot configuration (RAM06)
-    # robot = Robot(
-    #     name="RAM06",
-    #     mac_address="98:D3:32:20:28:46",
-    #     rfcomm_port="/dev/rfcomm0"
-    # )
-    
     robot = Robot(
-        name="RAM05",
-        mac_address="98:D3:32:10:15:96",    
-        rfcomm_port="/dev/rfcomm1"
+        name="RAM06",
+        mac_address="98:D3:32:20:28:46",
+        rfcomm_port="/dev/rfcomm0"
     )
-    
+
+    # robot = Robot(
+    #     name="RAM05",
+    #     mac_address="98:D3:32:10:15:96",
+    #     rfcomm_port="/dev/rfcomm1"
+    # )
+
     # Controllers
     unicycle = UnicycleController(
         wheel_base=WHEEL_BASE,
         wheel_radius=WHEEL_RADIUS
     )
     keyboard = KeyboardController(
-        acceleration=0.4, 
-        deceleration=0.2, 
+        acceleration=0.4,
+        deceleration=0.2,
         max_speed=10.0
     )
-    
+
     # Vision tracker
     vision = VisionTracker(
-        camera_id=0,
+        camera_id=4,
         area_width_m=AREA_WIDTH,
         area_height_m=AREA_HEIGHT,
         roi=CAMERA_ROI
     )
-    
+
     if MARKER_ID is not None:
         vision.set_target_marker(MARKER_ID)
-    
+
     print("=" * 70)
     print("Vision Coordinate Testing with Keyboard Control - RAM06")
     print("=" * 70)
@@ -66,14 +66,14 @@ def main():
     print(f"ROI: {CAMERA_ROI}")
     print("=" * 70)
     print()
-    
+
     # Connect to robot
     print(f"Connecting to {robot.name}...")
     if not robot.connect():
         print("Failed to connect to robot!")
         return
     print("Connected!\n")
-    
+
     # Start vision tracking
     print("Starting vision tracker...")
     if not vision.start():
@@ -81,7 +81,7 @@ def main():
         robot.disconnect()
         return
     print("Vision tracker ready!\n")
-    
+
     # Print keyboard controls
     keyboard.print_help()
     print("\nAdditional Info:")
@@ -89,39 +89,39 @@ def main():
     print("  - Angle is in degrees (0° = right, 90° = up, ±180° = left)")
     print("=" * 70)
     print()
-    
+
     keyboard.start()
-    
+
     try:
         last_update = time.time()
         position_history = []
-        
+
         while True:
             # Continuously check for key presses
             keyboard.check_keys()
-            
+
             current_time = time.time()
             if current_time - last_update >= UPDATE_RATE:
                 # Get velocity from keyboard
                 vx, vy = keyboard.get_velocity()
-                
+
                 # Compute robot command
                 command = unicycle.compute_command_from_direction(vx, vy, scale=1.0)
-                
+
                 # Get robot position and orientation from vision
                 x, y, theta, detected = vision.get_robot_position(show_debug=True)
-                
+
                 if detected:
                     # Convert theta to degrees for display
                     theta_deg = math.degrees(theta)
-                    
+
                     # Store position history
                     position_history.append((current_time, x, y, theta_deg))
-                    
+
                     # Keep only last 100 positions
                     if len(position_history) > 100:
                         position_history.pop(0)
-                    
+
                     # Calculate velocity from position changes (if enough history)
                     velocity_x = 0.0
                     velocity_y = 0.0
@@ -130,10 +130,10 @@ def main():
                         if dt_pos > 0:
                             velocity_x = (position_history[-1][1] - position_history[-2][1]) / dt_pos
                             velocity_y = (position_history[-1][2] - position_history[-2][2]) / dt_pos
-                    
+
                     # Calculate distance from origin
                     distance_from_origin = math.sqrt(x**2 + y**2)
-                    
+
                     # Display comprehensive status
                     print(f"\n{'='*70}")
                     print(f"Time: {current_time - time.time() + current_time:.2f}s")
@@ -158,26 +158,26 @@ def main():
                     print(f"{'-'*70}")
                     print(f"Command: {command}")
                     print(f"{'='*70}", end='')
-                    
+
                 else:
                     print(f"\n{'='*70}")
                     print(f"⚠ ROBOT NOT DETECTED")
                     print(f"Commanded Vel: vx={vx:+.2f}, vy={vy:+.2f}")
                     print(f"Command: {command}")
                     print(f"{'='*70}", end='')
-                
+
                 # Send command to robot
                 if not robot.send_message(command):
                     print("\nFailed to send. Connection may be lost.")
                     if not robot.reconnect():
                         print("Failed to reconnect. Exiting.")
                         break
-                
+
                 last_update = current_time
-    
+
     except KeyboardInterrupt:
         print("\n\nStopping robot...")
-    
+
     finally:
         keyboard.stop()
         vision.stop()
@@ -185,7 +185,7 @@ def main():
         robot.send_message(unicycle.stop_command())
         time.sleep(0.5)
         robot.disconnect()
-        
+
         # Print summary statistics
         if position_history:
             print("\n" + "="*70)
@@ -194,7 +194,7 @@ def main():
             x_vals = [p[1] for p in position_history]
             y_vals = [p[2] for p in position_history]
             theta_vals = [p[3] for p in position_history]
-            
+
             print(f"Samples collected: {len(position_history)}")
             print(f"\nX Position Range:")
             print(f"  Min: {min(x_vals):+8.4f} m")
@@ -209,7 +209,7 @@ def main():
             print(f"  Max: {max(theta_vals):+8.2f} °")
             print(f"  Avg: {sum(theta_vals)/len(theta_vals):+8.2f} °")
             print("="*70)
-        
+
         print("\nDisconnected. Goodbye!")
 
 
