@@ -11,17 +11,17 @@ if __name__ == "__main__":
     UPDATE_RATE = 0.05           # seconds (20 Hz)
 
     # Robot configuration
-    robot = Robot(
-        name="RAM06",
-        mac_address="98:D3:32:20:28:46",
-        rfcomm_port="/dev/rfcomm0"
-    )
-
     # robot = Robot(
-    #     name="RAM05",
-    #     mac_address="98:D3:32:10:15:96",
-    #     rfcomm_port="/dev/rfcomm1"
+    #     name="RAM06",
+    #     mac_address="98:D3:32:20:28:46",
+    #     rfcomm_port="/dev/rfcomm0"
     # )
+
+    robot = Robot(
+        name="RAM05",
+        mac_address="98:D3:32:10:15:96",
+        rfcomm_port="/dev/rfcomm1"
+    )
 
     # robot = Robot(
     #     name="RAM02",

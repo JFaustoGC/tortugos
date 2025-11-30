@@ -12,9 +12,9 @@ from controllers import follower_control
 # =============================================================================
 
 CONNECTIVITY = {
-    'RAM06': [],  # RAM06 listens to RAM05
-    # 'RAM05': ['RAM06'],  # RAM05 listens to RAM06
-    # 'RAM02': ['RAM06', 'RAM05'] # Example if RAM02 was active
+    'RAM06': ['RAM02', 'RAM05'],  # RAM06 listens to RAM05
+    'RAM05': ['RAM06', 'RAM02'],  # RAM05 listens to RAM06
+    'RAM02': ['RAM06', 'RAM05'] # Example if RAM02 was active
 }
 
 # Physics & Vision
@@ -27,15 +27,15 @@ CAMERA_ROI = (0, 0, 1920, 1080)
 START_X, START_Y = 0, 0
 
 # Control Gains
-GAINS = {'cx': 1.1, 'ct': 1.0, 'cy': 65.0, 'consensus': 0.00}
+GAINS = {'cx': 1.1, 'ct': 1.0, 'cy': 65.0, 'consensus': 1.0}
 K_PARAM = 1.0
 TRAJECTORY_DURATION = 1000.0
 
 # Fleet Config
 ROBOT_FLEET = [
     {'id': 'RAM06', 'mac': '98:D3:32:20:28:46', 'port': '/dev/rfcomm0', 'marker_id': 7, 'offset': np.array([0.2, 0.2]), 'color': 'blue'},
-    # {'id': 'RAM05', 'mac': '98:D3:32:10:15:96', 'port': '/dev/rfcomm1', 'marker_id': 0, 'offset': np.array([-0.2, -0.2]), 'color': 'green'},
-    # {'id': 'RAM02', 'mac': '98:D3:32:30:24:38', 'port': '/dev/rfcomm2', 'marker_id': 1, 'offset': np.array([0.0, 0.0]), 'color': 'red'}
+    {'id': 'RAM05', 'mac': '98:D3:32:10:15:96', 'port': '/dev/rfcomm1', 'marker_id': 0, 'offset': np.array([-0.2, -0.2]), 'color': 'green'},
+    {'id': 'RAM02', 'mac': '98:D3:32:30:24:38', 'port': '/dev/rfcomm2', 'marker_id': 1, 'offset': np.array([0.0, 0.0]), 'color': 'red'}
 ]
 
 # =============================================================================
@@ -49,6 +49,9 @@ class FormationRobot:
         self.marker_id = config['marker_id']
         self.offset = config['offset']
         self.color = config['color']
+
+        self.w_cmd_filtered = 0.0
+        self.w_filter_alpha = 0.3 # Tune this: 0.1 (smooth) to 1.0 (raw)
 
         # Hardware
         self.robot = Robot(self.id, config['mac'], config['port'])
@@ -111,9 +114,13 @@ class FormationRobot:
             # Store Data
             self._record_data(elapsed_time, x, y, x_ref, y_ref, err_dist, err_theta, v_cmd, w_cmd)
 
+            w_cmd = self.w_filter_alpha * w_cmd + (1 - self.w_filter_alpha) * self.w_cmd_filtered
+            self.w_cmd_filtered = w_cmd # Store for next loop
+
             # Hardware Command (Direct, no filtering)
-            command = self.controller.compute_command_from_velocities(v_cmd, w_cmd)
+            command = self.controller.compute_command_from_velocities(v_cmd, self.w_cmd_filtered)
         else:
+            self.w_cmd_filtered = 0.0
             command = self.controller.stop_command()
             print(f"[{self.id}] Lost visual tracking")
 

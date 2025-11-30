@@ -59,4 +59,7 @@ def follower_reference(vc_state, P):
 
     theta_dot_f = (xdot_f * yddot_f - ydot_f * xddot_f) / (xdot_f ** 2 + ydot_f ** 2)
 
+    # Just one line to see what the math sees
+    print(f"Theta: {theta_vc:.4f},  Cos: {np.cos(theta_vc):.4f}")
+
     return x_f, y_f, theta_f, theta_dot_f, v_f
